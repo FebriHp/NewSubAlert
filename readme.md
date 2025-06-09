@@ -51,6 +51,8 @@ docker run --rm submonitor
 
 ## 📝 Notes
 
+Dont forget to click Start or run /start on your telegram bot, to receive massage or notifications
+
 ⚠️ **This script is still under development and testing phase. Use responsibly.**
 
 Suggestions, contributions, and improvements are welcome!
