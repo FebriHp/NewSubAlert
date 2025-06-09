@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-# ============== KONFIGURASI ==============
+# ============== CONFIGURATION ==============
 TELEGRAM_BOT_TOKEN = "TOKEN"
 TELEGRAM_CHAT_ID = "CHAT_ID"
 SHODAN_API_KEY = "SHODAN_API"
@@ -16,7 +16,7 @@ MAX_AGE_DAYS = 180
 CHECKED_FILE = "checked.json"
 SLEEP_INTERVAL = 3600
 DOWNLOAD_FOLDER = "downloaded"
-# =========================================
+# ===========================================
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -56,7 +56,7 @@ def get_subdomains(domain):
             data = resp.json()
             return list({entry['name_value'] for entry in data if domain in entry['name_value']})
     except Exception as e:
-        print(f"[ERROR] Ambil subdomain {domain}: {e}")
+        print(f"[ERROR] Fetching subdomains for {domain}: {e}")
     return []
 
 def is_recent(subdomain):
@@ -72,7 +72,7 @@ def is_recent(subdomain):
                     age_days = (datetime.utcnow() - created).days
                     return age_days <= MAX_AGE_DAYS, created.date()
     except Exception as e:
-        print(f"[ERROR] Cek umur {subdomain}: {e}")
+        print(f"[ERROR] Checking age for {subdomain}: {e}")
     return False, None
 
 def check_http(subdomain):
@@ -83,7 +83,7 @@ def check_http(subdomain):
         title = soup.title.string.strip() if soup.title else "No Title"
         return r.status_code, title
     except:
-        return None, "Tidak dapat diakses"
+        return None, "Unreachable"
 
 def resolve_ip(subdomain):
     try:
@@ -152,7 +152,7 @@ def scan_sensitive_files(subdomain):
                         f.write(resp.content)
                     send_telegram_file(fullpath, caption=f"{subdomain} → {path}")
                     os.remove(fullpath)
-                    findings.append(f"- `{path}` → 200 OK (file dikirim)")
+                    findings.append(f"- `{path}` → 200 OK (file sent)")
         except:
             continue
     return findings
@@ -164,7 +164,7 @@ def run():
             if domain not in checked:
                 checked[domain] = []
 
-            print(f"[INFO] Mengecek domain: {domain}")
+            print(f"[INFO] Checking domain: {domain}")
             subdomains = get_subdomains(domain)
 
             for sub in subdomains:
@@ -180,13 +180,13 @@ def run():
                     cve_result = format_cve_list(shodan_cves, vulners_cves)
 
                     files_found = scan_sensitive_files(sub)
-                    file_section = "\n📂 *File Sensitif:*\n" + "\n".join(files_found) if files_found else ""
+                    file_section = "\n📂 *Sensitive Files:*\n" + "\n".join(files_found) if files_found else ""
 
                     message = (
-                        f"🔔 *{domain} - Subdomain baru terdeteksi!*\n"
-                        f"`{sub}`\n📅 Aktif: {tgl}\n"
+                        f"🔔 *{domain} - New subdomain detected!*\n"
+                        f"`{sub}`\n📅 First Seen: {tgl}\n"
                         f"📄 Status: `{status}`\n📝 Title: *{title}*\n"
-                        f"\n*CVEs:*\n{cve_result if cve_result else 'Tidak ditemukan'}"
+                        f"\n*CVEs:*\n{cve_result if cve_result else 'None found'}"
                         f"{file_section}"
                     )
                     print(message)
@@ -195,10 +195,10 @@ def run():
                 checked[domain].append(sub)
 
             save_checked(checked)
-            print(f"[INFO] Domain {domain} selesai. Tunggu 1 menit...\n")
+            print(f"[INFO] Domain {domain} done. Waiting 1 minute...\n")
             time.sleep(60)
 
-        print(f"[INFO] Selesai semua domain. Tidur {SLEEP_INTERVAL // 60} menit...\n")
+        print(f"[INFO] All domains checked. Sleeping for {SLEEP_INTERVAL // 60} minutes...\n")
         time.sleep(SLEEP_INTERVAL)
 
 if __name__ == "__main__":
